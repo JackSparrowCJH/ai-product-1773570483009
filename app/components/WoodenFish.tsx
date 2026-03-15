@@ -14,34 +14,58 @@ export default function WoodenFish() {
   const [merit, setMerit] = useState(0);
   const [floats, setFloats] = useState<FloatingText[]>([]);
   const [scale, setScale] = useState(1);
-  const audioPoolRef = useRef<HTMLAudioElement[]>([]);
-  const poolIndexRef = useRef(0);
-  const POOL_SIZE = 8;
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
-  const getAudioPool = useCallback(() => {
-    if (audioPoolRef.current.length === 0) {
-      for (let i = 0; i < POOL_SIZE; i++) {
-        const a = new Audio("/knock.mp3");
-        a.preload = "auto";
-        audioPoolRef.current.push(a);
-      }
+  const getAudioCtx = useCallback(() => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new AudioContext();
     }
-    return audioPoolRef.current;
+    return audioCtxRef.current;
   }, []);
 
   const playSound = useCallback(() => {
-    const pool = getAudioPool();
-    const audio = pool[poolIndexRef.current % POOL_SIZE];
-    poolIndexRef.current++;
-    audio.currentTime = 0;
-    audio.play().catch(() => {});
-  }, [getAudioPool]);
+    const ctx = getAudioCtx();
+    const now = ctx.currentTime;
+
+    // Oscillator for the "knock" tone
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.exponentialRampToValueAtTime(80, now + 0.12);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.6, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.15);
+
+    // Noise burst for attack
+    const bufferSize = ctx.sampleRate * 0.05;
+    const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.exp((-i / ctx.sampleRate) * 80);
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuffer;
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.3, now);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+    noise.connect(noiseGain);
+    noiseGain.connect(ctx.destination);
+    noise.start(now);
+    noise.stop(now + 0.05);
+  }, [getAudioCtx]);
 
   const handleTap = useCallback(
     (e: React.MouseEvent | React.TouchEvent) => {
+      e.preventDefault();
       let cx: number, cy: number;
       if ("touches" in e) {
-        const t = e.touches[0] || (e as any).changedTouches[0];
+        const t = e.touches[0];
         cx = t.clientX;
         cy = t.clientY;
       } else {
@@ -53,14 +77,11 @@ export default function WoodenFish() {
       setMerit((m) => m + 1);
 
       const id = nextId++;
-      const offsetX = (Math.random() - 0.5) * 40;
+      const offsetX = (Math.random() - 0.5) * 60;
       setFloats((f) => [...f, { id, x: cx + offsetX, y: cy - 20 }]);
+      setTimeout(() => setFloats((f) => f.filter((item) => item.id !== id)), 900);
 
-      setTimeout(() => {
-        setFloats((f) => f.filter((item) => item.id !== id));
-      }, 900);
-
-      setScale(0.9);
+      setScale(0.88);
       setTimeout(() => setScale(1), 100);
     },
     [playSound]
@@ -69,9 +90,7 @@ export default function WoodenFish() {
   return (
     <div style={styles.container} onMouseDown={handleTap} onTouchStart={handleTap}>
       <style>{keyframes}</style>
-
       <div style={styles.meritDisplay}>功德：{merit}</div>
-
       <div
         style={{
           ...styles.fish,
@@ -81,9 +100,7 @@ export default function WoodenFish() {
       >
         🪵
       </div>
-
       <div style={styles.hint}>点击敲木鱼</div>
-
       {floats.map((f) => (
         <div key={f.id} style={{ ...styles.floatText, left: f.x, top: f.y }}>
           功德+1
@@ -110,10 +127,10 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     background: "linear-gradient(180deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)",
     userSelect: "none",
-    WebkitUserSelect: "none",
     overflow: "hidden",
     position: "relative",
     cursor: "pointer",
+    touchAction: "manipulation",
   },
   meritDisplay: {
     color: "#f5c842",
